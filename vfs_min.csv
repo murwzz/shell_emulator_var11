@@ -1,0 +1,7 @@
+path,type,owner,content_b64
+/home,dir,root,
+/home/user,dir,user,
+/home/user/notes.txt,file,user,SGVsbG8sIHdvcmxkIQ==
+/etc,dir,root,
+/var,dir,root,
+/var/log,dir,root,

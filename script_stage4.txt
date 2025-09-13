@@ -1,0 +1,6 @@
+whoami
+cal
+cal 2025-09
+rev hello world
+rev "hello world"
+rev

@@ -149,6 +149,29 @@ class Shell:
             raise ValueError("cd: expected 1 argument")
         self.cwd_parts = self.vfs.chdir(self.cwd_parts, args[0])
         return ""
+    
+    def cmd_whoami(self, args: list[str]) -> str:
+        if args:
+            raise ValueError("whoami: no arguments expected")
+        return self.user
+
+    def cmd_cal(self, args: list[str]) -> str:
+        # календарь текущего месяца или указанного (YYYY-MM)
+        import datetime as dt, calendar
+        cal = calendar.TextCalendar()
+        if not args:
+            today = dt.date.today()
+            return cal.formatmonth(today.year, today.month)
+        if len(args) == 1 and len(args[0]) == 7 and args[0][4] == "-":
+            y, m = args[0].split("-")
+            return cal.formatmonth(int(y), int(m))
+        raise ValueError("cal: usage: cal [YYYY-MM]")
+
+    def cmd_rev(self, args: list[str]) -> str:
+        if not args:
+            raise ValueError("rev: usage: rev <text>")
+        return " ".join(s[::-1] for s in args)
+
 
 class App(tk.Tk):
     def __init__(self, shell: Shell):

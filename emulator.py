@@ -6,10 +6,11 @@ import datetime as dt
 import calendar
 
 
+# ---------- узел виртуальной ФС ----------
 @dataclass
 class VFSNode:
     name: str
-    type: str                 
+    type: str                 # 'dir' | 'file'
     owner: str = "root"
     content_b64: Optional[str] = None
     children: Dict[str, "VFSNode"] = field(default_factory=dict)
@@ -17,6 +18,8 @@ class VFSNode:
     def is_dir(self):  return self.type == 'dir'
     def is_file(self): return self.type == 'file'
 
+
+# ---------- VFS (только в памяти) ----------
 class VFS:
     def __init__(self, name="vfs"):
         self.name = name
@@ -32,10 +35,11 @@ class VFS:
         if not path or path == ".":
             return cwd_parts[:]
         parts = self._split(path) if path.startswith("/") else cwd_parts + self._split(path)
-        out = []
+        out: List[str] = []
         for p in parts:
             if p == "..":
-                if out: out.pop()
+                if out:
+                    out.pop()
             else:
                 out.append(p)
         return out
@@ -60,6 +64,10 @@ class VFS:
             raise NotADirectoryError("not a directory")
         return self.abspath_parts(cwd_parts, path)
 
+    def chown(self, cwd_parts: List[str], path: str, owner: str) -> None:
+        node = self.get(cwd_parts, path)
+        node.owner = owner
+
     def _mkdirs(self, parts: List[str]) -> VFSNode:
         cur = self.root
         for p in parts:
@@ -76,7 +84,8 @@ class VFS:
 
     def add_file(self, path: str, owner: str, content_b64: Optional[str]):
         parts = self._split(path)
-        if not parts: raise ValueError("empty file path")
+        if not parts:
+            raise ValueError("empty file path")
         dir_parts, fname = parts[:-1], parts[-1]
         d = self._mkdirs(dir_parts)
         d.children[fname] = VFSNode(fname, "file", owner, content_b64 or "")
@@ -88,58 +97,66 @@ class VFS:
         v = VFS(name or os.path.splitext(os.path.basename(path))[0])
         with open(path, newline="", encoding="utf-8") as f:
             r = csv.DictReader(f)
-            need = {"path","type","owner"}
+            need = {"path", "type", "owner"}
             if not need.issubset(r.fieldnames or []):
                 raise ValueError("bad CSV header: need path,type,owner[,content_b64]")
-            for i,row in enumerate(r, 2):
+            for i, row in enumerate(r, 2):
                 p = (row["path"] or "").strip()
                 t = (row["type"] or "").strip()
                 o = (row["owner"] or "root").strip()
                 c = (row.get("content_b64") or "").strip()
-                if not p or t not in ("dir","file"):
+                if not p or t not in ("dir", "file"):
                     raise ValueError(f"row {i}: bad values")
                 if t == "dir":
                     v.add_dir(p, o)
                 else:
                     if c:
-                        try: base64.b64decode(c.encode("utf-8"))
-                        except Exception: raise ValueError(f"row {i}: content_b64 not valid base64")
+                        try:
+                            base64.b64decode(c.encode("utf-8"))
+                        except Exception:
+                            raise ValueError(f"row {i}: content_b64 not valid base64")
                     v.add_file(p, o, c)
         return v
 
+
 def load_default_vfs() -> VFS:
     v = VFS("default")
-    v.add_dir("/home/user","user")
-    v.add_file("/home/user/readme.txt","user", base64.b64encode(b"Hello VFS").decode())
-    v.add_dir("/etc","root")
-    v.add_dir("/var/log","root")
+    v.add_dir("/home/user", "user")
+    v.add_file("/home/user/readme.txt", "user", base64.b64encode(b"Hello VFS").decode())
+    v.add_dir("/etc", "root")
+    v.add_dir("/var/log", "root")
     return v
 
-# --------- оболочка ---------
+
+# ---------- оболочка ----------
 class Shell:
     def __init__(self, vfs: VFS, user: str | None = None):
         self.vfs = vfs
         self.cwd_parts: List[str] = []
         self.user = user or os.environ.get("USER") or os.environ.get("USERNAME") or "user"
 
-    def parse(self, line):  
+    def parse(self, line: str) -> List[str]:
         return shlex.split(os.path.expandvars(line), posix=True)
 
     def run(self, line: str) -> str:
         tokens = self.parse(line.strip())
-        if not tokens: return ""
+        if not tokens:
+            return ""
         cmd, *args = tokens
-        if cmd == "exit": raise SystemExit
+        if cmd == "exit":
+            raise SystemExit
         fn = getattr(self, f"cmd_{cmd}", None)
-        if not fn: raise ValueError(f"unknown command: {cmd}")
+        if not fn:
+            raise ValueError(f"unknown command: {cmd}")
         return fn(args)
 
+    # ----- команды -----
     def cmd_ls(self, args: List[str]) -> str:
         path = args[0] if args else "/" + "/".join(self.cwd_parts)
         node = self.vfs.get(self.cwd_parts, path)
         if node.is_file():
             return node.name
-        items = []
+        items: List[str] = []
         for ch in self.vfs.listdir(node):
             items.append(ch.name + ("/" if ch.is_dir() else ""))
         return "  ".join(items)
@@ -149,15 +166,13 @@ class Shell:
             raise ValueError("cd: expected 1 argument")
         self.cwd_parts = self.vfs.chdir(self.cwd_parts, args[0])
         return ""
-    
-    def cmd_whoami(self, args: list[str]) -> str:
+
+    def cmd_whoami(self, args: List[str]) -> str:
         if args:
             raise ValueError("whoami: no arguments expected")
         return self.user
 
-    def cmd_cal(self, args: list[str]) -> str:
-        # календарь текущего месяца или указанного (YYYY-MM)
-        import datetime as dt, calendar
+    def cmd_cal(self, args: List[str]) -> str:
         cal = calendar.TextCalendar()
         if not args:
             today = dt.date.today()
@@ -167,12 +182,28 @@ class Shell:
             return cal.formatmonth(int(y), int(m))
         raise ValueError("cal: usage: cal [YYYY-MM]")
 
-    def cmd_rev(self, args: list[str]) -> str:
+    def cmd_rev(self, args: List[str]) -> str:
         if not args:
             raise ValueError("rev: usage: rev <text>")
         return " ".join(s[::-1] for s in args)
 
+    def cmd_chown(self, args: List[str]) -> str:
+        if len(args) != 2:
+            raise ValueError("chown: usage: chown <owner> <path>")
+        owner, path = args
+        self.vfs.chown(self.cwd_parts, path, owner)
+        return ""
 
+    # утилита для демонстрации владельца (необязательная для задания)
+    def cmd_stat(self, args: List[str]) -> str:
+        if len(args) != 1:
+            raise ValueError("stat: usage: stat <path>")
+        node = self.vfs.get(self.cwd_parts, args[0])
+        kind = "dir" if node.is_dir() else "file"
+        return f"{kind} {node.name} owner={node.owner}"
+
+
+# ---------- GUI ----------
 class App(tk.Tk):
     def __init__(self, shell: Shell):
         super().__init__()
@@ -214,21 +245,26 @@ class App(tk.Tk):
         self._print_line(full)
         try:
             out = self.shell.run(cmd)
-            if out: self._print_line(out)
+            if out:
+                self._print_line(out)
         except SystemExit:
             self.destroy(); return
         except Exception as e:
             self._print_line(f"error: {e}")
         self._update_prompt()
 
-    def run_script(self, lines):
+    def run_script(self, lines: List[str]):
         for raw in lines:
             line = raw.rstrip("\n")
-            if not line.strip(): continue
+            s = line.strip()
+            # поддержка пустых строк и комментариев (# ...)
+            if not s or s.startswith("#"):
+                continue
             self._print_line(self._prompt() + line)
             try:
                 out = self.shell.run(line)
-                if out: self._print_line(out)
+                if out:
+                    self._print_line(out)
             except SystemExit:
                 self.destroy(); return
             except Exception as e:
@@ -236,8 +272,10 @@ class App(tk.Tk):
                 break
         self._update_prompt()
 
+
+# ---------- точка входа ----------
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="GUI Shell Emulator (stage 3)")
+    parser = argparse.ArgumentParser(description="GUI Shell Emulator (stages 1–5)")
     parser.add_argument("--vfs", help="путь к VFS CSV")
     parser.add_argument("--script", help="путь к стартовому скрипту")
     parser.add_argument("--vfs-name", help="имя VFS в заголовке")
@@ -245,6 +283,7 @@ def main(argv=None):
 
     print(f"[startup] argv={sys.argv} parsed={{'vfs': {args.vfs!r}, 'script': {args.script!r}, 'vfs_name': {args.vfs_name!r}}}")
 
+    # загрузка VFS
     try:
         vfs = VFS.from_csv(args.vfs, args.vfs_name) if args.vfs else load_default_vfs()
         if args.vfs_name and not args.vfs:
@@ -255,6 +294,7 @@ def main(argv=None):
 
     app = App(Shell(vfs=vfs))
 
+    # стартовый скрипт
     if args.script:
         try:
             with open(args.script, encoding='utf-8') as f:
@@ -265,6 +305,7 @@ def main(argv=None):
         app.after(200, lambda: app.run_script(lines))
 
     app.mainloop()
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,5 @@
+stat /home/user/notes.txt
+chown alice /home/user/notes.txt
+stat /home/user/notes.txt
+chown
+
